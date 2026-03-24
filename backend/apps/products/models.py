@@ -1,4 +1,8 @@
+from django.conf import settings
 from django.db import models
+from django.db.models import Avg
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 
 
 class Category(models.Model):
@@ -317,3 +321,54 @@ class StockMovement(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_movement_type_display()} {self.quantity}x {self.product.name}"
+
+
+# ---------------------------------------------------------------------------
+# Avaliações de produtos
+# ---------------------------------------------------------------------------
+
+
+class Review(models.Model):
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+        verbose_name="produto",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+        verbose_name="usuário",
+    )
+    rating = models.PositiveSmallIntegerField(
+        "nota",
+        choices=[(i, str(i)) for i in range(1, 6)],
+    )
+    comment = models.TextField("comentário", blank=True, default="")
+    verified_purchase = models.BooleanField("compra verificada", default=False)
+    created_at = models.DateTimeField("criado em", auto_now_add=True)
+    updated_at = models.DateTimeField("atualizado em", auto_now=True)
+
+    class Meta:
+        db_table = "reviews"
+        unique_together = [["product", "user"]]
+        ordering = ["-created_at"]
+        verbose_name = "avaliação"
+        verbose_name_plural = "avaliações"
+
+    def __str__(self) -> str:
+        return f"{self.user} → {self.product.name} ({self.rating}★)"
+
+
+@receiver([post_save, post_delete], sender=Review)
+def update_product_rating(sender, instance, **kwargs):
+    product = instance.product
+    agg = Review.objects.filter(product=product).aggregate(
+        avg=Avg("rating"), count=models.Count("id")
+    )
+    count = agg["count"] or 0
+    avg = agg["avg"] or 0
+    product.rating = round(float(avg), 1)
+    product.review_count = count
+    product.save(update_fields=["rating", "review_count"])

@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import QuoteRequest, QuoteRequestItem, QuoteRequestItemPhoto, Sale, SaleItem
+from .models import QuoteRequest, QuoteRequestItem, QuoteRequestItemPhoto, Sale, SaleItem, SaleStatus
 from apps.products.models import StoreSettings
 
 
@@ -399,6 +399,270 @@ class CheckoutCreateSaleView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class MercadoPagoCreatePaymentView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        import mercadopago
+
+        access_token = getattr(settings, "MERCADOPAGO_ACCESS_TOKEN", "")
+        if not access_token:
+            return Response(
+                {"detail": "Token do Mercado Pago não configurado."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        payload = request.data if isinstance(request.data, dict) else {}
+        items = payload.get("items") or []
+        if not isinstance(items, list) or not items:
+            return Response(
+                {"detail": "Envie ao menos um item para criar o pagamento."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment_method = (payload.get("payment_method") or "pix").lower()
+        if payment_method not in {"pix", "credit_card"}:
+            payment_method = "pix"
+
+        def to_decimal(raw, default="0"):
+            try:
+                return Decimal(str(raw if raw is not None else default))
+            except (InvalidOperation, TypeError, ValueError):
+                return Decimal(default)
+
+        customer = payload.get("customer") or {}
+        total_amount = float(to_decimal(payload.get("total_amount"), "0"))
+        coupon_code = str(payload.get("coupon_code") or "").strip()
+        discount_amount = to_decimal(payload.get("discount_amount"), "0")
+
+        if total_amount <= 0:
+            return Response(
+                {"detail": "O valor total do pedido deve ser maior que zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cpf_raw = str(customer.get("cpf") or "").replace(".", "").replace("-", "").strip()
+        full_name = str(customer.get("name") or "").strip() or "Cliente"
+        name_parts = full_name.split()
+        first_name = name_parts[0] if name_parts else "Cliente"
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else "Sobrenome"
+
+        with transaction.atomic():
+            sale = Sale.objects.create(
+                user=request.user if getattr(request, "user", None) and request.user.is_authenticated else None,
+                customer_name=full_name,
+                customer_email=str(customer.get("email") or "").strip(),
+                customer_phone=str(customer.get("phone") or "").strip(),
+                customer_city=str(customer.get("city") or "").strip(),
+                customer_state=str(customer.get("state") or "").strip(),
+                coupon_code=coupon_code,
+                discount_amount=discount_amount,
+                total_amount=to_decimal(payload.get("total_amount"), "0"),
+                payment_method="pix" if payment_method == "pix" else "cartao",
+            )
+
+            valid_items = 0
+            for raw_item in items:
+                if not isinstance(raw_item, dict):
+                    continue
+                product_name = str(raw_item.get("name") or "").strip()
+                if not product_name:
+                    continue
+                try:
+                    quantity = int(raw_item.get("quantity") or 1)
+                except (TypeError, ValueError):
+                    quantity = 1
+                unit_price = to_decimal(raw_item.get("unit_price"), "0")
+                total_price = to_decimal(raw_item.get("total_price"), "0")
+                if total_price <= 0:
+                    total_price = unit_price * quantity
+                product_id_raw = raw_item.get("product_id")
+                try:
+                    product_id = int(product_id_raw) if product_id_raw not in (None, "") else None
+                except (TypeError, ValueError):
+                    product_id = None
+                SaleItem.objects.create(
+                    sale=sale,
+                    product_id=product_id,
+                    product_name=product_name,
+                    platform=str(raw_item.get("platform") or "").strip(),
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    total_price=total_price,
+                )
+                valid_items += 1
+
+            if valid_items == 0:
+                return Response(
+                    {"detail": "Nenhum item válido para registrar a venda."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        sdk = mercadopago.SDK(access_token)
+        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+
+        payer = {
+            "email": str(customer.get("email") or "cliente@example.com").strip(),
+            "first_name": first_name,
+            "last_name": last_name,
+        }
+        if cpf_raw and len(cpf_raw) == 11:
+            payer["identification"] = {"type": "CPF", "number": cpf_raw}
+
+        if payment_method == "pix":
+            mp_payload = {
+                "transaction_amount": total_amount,
+                "payment_method_id": "pix",
+                "payer": payer,
+                "description": f"Pedido Eco-Play #{str(sale.public_id)[:8].upper()}",
+                "external_reference": str(sale.public_id),
+                "notification_url": f"{frontend_url.rstrip('/')}/api/checkout/mercadopago/webhook/",
+            }
+            mp_response = sdk.payment().create(mp_payload)
+            mp_data = mp_response.get("response", {})
+            mp_status_code = mp_response.get("status", 500)
+
+            if mp_status_code not in (200, 201):
+                sale.delete()
+                return Response(
+                    {"detail": "Erro ao criar pagamento PIX no Mercado Pago.", "mp_error": mp_data},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            payment_id = str(mp_data.get("id", ""))
+            sale.mp_payment_id = payment_id
+            sale.mp_status = str(mp_data.get("status", "pending"))
+            sale.save(update_fields=["mp_payment_id", "mp_status"])
+
+            tx = mp_data.get("point_of_interaction", {}).get("transaction_data", {})
+            return Response({
+                "success": True,
+                "protocol": str(sale.public_id),
+                "sale_id": sale.id,
+                "payment_method": "pix",
+                "payment_id": payment_id,
+                "mp_status": sale.mp_status,
+                "qr_code": tx.get("qr_code", ""),
+                "qr_code_base64": tx.get("qr_code_base64", ""),
+                "ticket_url": tx.get("ticket_url", ""),
+            }, status=status.HTTP_201_CREATED)
+
+        else:  # credit_card
+            card_token = str(payload.get("card_token") or "").strip()
+            payment_method_id = str(payload.get("payment_method_id") or "visa").strip()
+            try:
+                installments = int(payload.get("installments") or 1)
+            except (TypeError, ValueError):
+                installments = 1
+            installments = max(1, min(12, installments))
+
+            if not card_token:
+                sale.delete()
+                return Response(
+                    {"detail": "Token do cartão não informado."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            mp_payload = {
+                "transaction_amount": total_amount,
+                "token": card_token,
+                "installments": installments,
+                "payment_method_id": payment_method_id,
+                "payer": payer,
+                "description": f"Pedido Eco-Play #{str(sale.public_id)[:8].upper()}",
+                "external_reference": str(sale.public_id),
+                "notification_url": f"{frontend_url.rstrip('/')}/api/checkout/mercadopago/webhook/",
+            }
+            mp_response = sdk.payment().create(mp_payload)
+            mp_data = mp_response.get("response", {})
+            mp_status_code = mp_response.get("status", 500)
+
+            if mp_status_code not in (200, 201):
+                sale.delete()
+                return Response(
+                    {"detail": "Erro ao processar pagamento no Mercado Pago.", "mp_error": mp_data},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            payment_id = str(mp_data.get("id", ""))
+            mp_payment_status = str(mp_data.get("status", ""))
+            sale.mp_payment_id = payment_id
+            sale.mp_status = mp_payment_status
+            if mp_payment_status == "approved":
+                from django.utils import timezone
+                sale.status = SaleStatus.FINALIZADA
+                sale.finalized_at = timezone.now()
+            sale.save(update_fields=["mp_payment_id", "mp_status", "status", "finalized_at"])
+
+            return Response({
+                "success": True,
+                "protocol": str(sale.public_id),
+                "sale_id": sale.id,
+                "payment_method": "credit_card",
+                "payment_id": payment_id,
+                "mp_status": mp_payment_status,
+                "status_detail": str(mp_data.get("status_detail", "")),
+            }, status=status.HTTP_201_CREATED)
+
+
+class MercadoPagoWebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        import mercadopago
+
+        data = request.data if isinstance(request.data, dict) else {}
+        notification_type = data.get("type") or data.get("action", "")
+
+        if "payment" not in notification_type:
+            return Response({"status": "ignored"})
+
+        payment_id = str((data.get("data") or {}).get("id") or "").strip()
+        if not payment_id:
+            return Response({"status": "ignored"})
+
+        access_token = getattr(settings, "MERCADOPAGO_ACCESS_TOKEN", "")
+        if not access_token:
+            return Response({"status": "no_token"})
+
+        try:
+            sdk = mercadopago.SDK(access_token)
+            payment_response = sdk.payment().get(payment_id)
+            mp_data = payment_response.get("response", {})
+            mp_payment_status = str(mp_data.get("status", ""))
+            external_reference = str(mp_data.get("external_reference") or "")
+
+            if not external_reference:
+                return Response({"status": "no_reference"})
+
+            try:
+                import uuid
+                sale = Sale.objects.get(public_id=uuid.UUID(external_reference))
+            except (Sale.DoesNotExist, ValueError):
+                return Response({"status": "sale_not_found"})
+
+            sale.mp_status = mp_payment_status
+            sale.mp_payment_id = payment_id
+            update_fields = ["mp_status", "mp_payment_id"]
+
+            if mp_payment_status == "approved" and sale.status != SaleStatus.FINALIZADA:
+                from django.utils import timezone
+                sale.status = SaleStatus.FINALIZADA
+                sale.finalized_at = timezone.now()
+                update_fields += ["status", "finalized_at"]
+            elif mp_payment_status in ("cancelled", "refunded", "charged_back"):
+                sale.status = SaleStatus.CANCELADA
+                update_fields.append("status")
+
+            sale.save(update_fields=update_fields)
+        except Exception:
+            pass
+
+        return Response({"status": "ok"})
 
 
 class StorePublicSettingsView(APIView):

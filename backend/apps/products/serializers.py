@@ -12,6 +12,7 @@ from .models import (
     Coupon,
     Showcase,
     ShowcaseItem,
+    Review,
     MAX_SHOWCASE_ITEMS,
 )
 
@@ -269,6 +270,35 @@ class ProductSerializer(serializers.ModelSerializer):
                 {"pix_price": "O preço pix deve ser menor ou igual ao preço atual."}
             )
         return attrs
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Review
+        fields = ["id", "user_name", "rating", "comment", "verified_purchase", "created_at"]
+        read_only_fields = ["id", "user_name", "verified_purchase", "created_at"]
+
+    def get_user_name(self, obj):
+        name = obj.user.full_name or obj.user.username or ""
+        if not name:
+            return "Anônimo"
+        parts = name.split()
+        if len(parts) >= 2:
+            return f"{parts[0]} {parts[-1][0]}."
+        return parts[0] if parts else "Anônimo"
+
+
+class ReviewCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = ["rating", "comment"]
+
+    def validate_rating(self, value):
+        if not 1 <= value <= 5:
+            raise serializers.ValidationError("A nota deve ser entre 1 e 5.")
+        return value
 
 
 class QuoteProductSuggestionSerializer(serializers.ModelSerializer):

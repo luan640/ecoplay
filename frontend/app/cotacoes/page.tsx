@@ -31,7 +31,7 @@ export default function CotacoesPage() {
                 asChild
                 className="mt-8 h-12 rounded-xl bg-[#49e4e6] px-8 text-sm font-black uppercase tracking-wide text-[#0f0f0f] shadow-[0_0_22px_rgba(73,228,230,0.4)] transition-all hover:scale-[1.03] hover:bg-[#2fc8cc]"
               >
-                <Link href="/cotacao/dados/">Iniciar cotacao</Link>
+                <Link href="/cotacao/dados/">Iniciar cotação</Link>
               </Button>
             </div>
 

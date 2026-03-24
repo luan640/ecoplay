@@ -103,18 +103,18 @@ export default function ProductCard({ product }: ProductCardProps) {
           {product.title}
         </h3>
 
-        {/* Rating placeholder */}
-        <div className="flex items-center gap-1" aria-label="Avaliação: 4.8 de 5 estrelas">
+        {/* Rating */}
+        <div className="flex items-center gap-1" aria-label={`Avaliação: ${product.rating} de 5 estrelas`}>
           {[1, 2, 3, 4, 5].map((star) => (
             <Star
               key={star}
               className={`w-3 h-3 ${
-                star <= 4 ? 'fill-[#49e4e6] text-[#49e4e6]' : 'fill-[#2e2e2e] text-[#2e2e2e]'
+                star <= Math.round(product.rating) ? 'fill-[#49e4e6] text-[#49e4e6]' : 'fill-[#2e2e2e] text-[#2e2e2e]'
               }`}
               aria-hidden="true"
             />
           ))}
-          <span className="text-[#666666] text-[10px] ml-0.5">(42)</span>
+          <span className="text-[#666666] text-[10px] ml-0.5">({product.reviewCount})</span>
         </div>
 
         {/* Pricing */}

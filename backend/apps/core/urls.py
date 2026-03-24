@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import AsaasCheckoutCreateView, CheckoutCreateSaleView, QuoteSubmitView, StorePublicSettingsView, healthcheck
+from .views import AsaasCheckoutCreateView, CheckoutCreateSaleView, MercadoPagoCreatePaymentView, MercadoPagoWebhookView, QuoteSubmitView, StorePublicSettingsView, healthcheck
 from .admin_views import (
     AdminStatsView,
     AdminCotacoesListView,
@@ -36,6 +36,8 @@ urlpatterns = [
     path("store-settings/", StorePublicSettingsView.as_view(), name="api-store-settings"),
     path("checkout/asaas/", AsaasCheckoutCreateView.as_view(), name="api-checkout-asaas"),
     path("checkout/create-sale/", CheckoutCreateSaleView.as_view(), name="api-checkout-create-sale"),
+    path("checkout/mercadopago/create-payment/", MercadoPagoCreatePaymentView.as_view(), name="api-checkout-mp-create"),
+    path("checkout/mercadopago/webhook/", MercadoPagoWebhookView.as_view(), name="api-checkout-mp-webhook"),
     path("cotacoes/submit/", QuoteSubmitView.as_view(), name="api-cotacoes-submit"),
     # Admin panel endpoints
     path("admin/stats/", AdminStatsView.as_view(), name="admin-stats"),

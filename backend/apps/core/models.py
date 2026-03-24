@@ -197,6 +197,11 @@ class Sale(models.Model):
     )
     admin_notes = models.TextField("observações internas", blank=True, default="")
     finalized_at = models.DateTimeField("finalizada em", null=True, blank=True)
+
+    # Mercado Pago
+    mp_payment_id = models.CharField("ID do pagamento MP", max_length=100, blank=True, default="")
+    mp_status = models.CharField("status MP", max_length=50, blank=True, default="")
+
     created_at = models.DateTimeField("criada em", auto_now_add=True)
     updated_at = models.DateTimeField("atualizada em", auto_now=True)
 

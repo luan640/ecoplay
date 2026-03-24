@@ -390,10 +390,10 @@ export default function CotacaoDadosPage() {
         <section className="mx-auto max-w-4xl overflow-hidden rounded-3xl border border-[#2e2e2e] bg-[radial-gradient(circle_at_top_left,_#1f2450_0%,_#141414_45%,_#101010_100%)] p-6 sm:p-10">
           <div className="text-center">
             <p className="inline-flex rounded-full border border-[#49e4e6]/35 bg-[#49e4e6]/10 px-3 py-1 text-[11px] font-bold uppercase tracking-widest text-[#7af2f3]">
-              Cotacao recebida
+              Cotação recebida
             </p>
             <h1 className="mt-4 text-3xl font-black text-[#f5f5f5] sm:text-4xl">
-              Sua cotacao foi enviada com sucesso!
+              Sua cotação foi enviada com sucesso!
             </h1>
             <p className="mx-auto mt-3 max-w-2xl text-sm text-[#c7c7c7] sm:text-base">
               Recebemos {quoteSubmitted.items_count} produto(s). Nossa equipe vai avaliar e
@@ -474,7 +474,7 @@ export default function CotacaoDadosPage() {
                 Fase 3: revisar cotacao
               </h1>
               <p className="mt-2 text-sm text-[#b7b7b7] sm:text-base">
-                Confira os produtos adicionados na cesta e finalize sua cotacao.
+                Confira os produtos adicionados na cesta e finalize sua cotação.
               </p>
             </>
           )}
@@ -502,7 +502,7 @@ export default function CotacaoDadosPage() {
             <div>
               <label className="text-sm font-semibold text-[#e5e5e5]">E-mail</label>
               <p className="mt-1 text-xs text-[#9ca3af]">
-                Sua cotacao sera enviada por e-mail. Por favor, insira-o abaixo para
+                Sua cotação sera enviada por e-mail. Por favor, insira-o abaixo para
                 continuar.
               </p>
               <Input
@@ -669,8 +669,8 @@ export default function CotacaoDadosPage() {
                   </h2>
                   <p className="mt-2 text-sm leading-relaxed text-[#cfcfcf]">
                     Compramos diversos produtos usados, jogos, acessorios, smartphones e mais! Se voce tem
-                    algum produto que acredita que faz sentido para o universo MeuGameUsado, como action
-                    figures, fique a vontade para inclui-los em sua cotacao.
+                    algum produto que acredita que faz sentido para o universo GameStore, como action
+                    figures, fique a vontade para inclui-los em sua cotação.
                   </p>
                 </div>
 
@@ -1064,14 +1064,14 @@ export default function CotacaoDadosPage() {
               className="h-11 rounded-xl bg-[#49e4e6] px-6 font-black text-[#0f0f0f] hover:bg-[#2fc8cc]"
             >
               {phase === 1
-                ? 'Avancar para Fase 2'
+                ? 'Avançar para Fase 2'
                 : phase === 2
                   ? phase2Step === 'search'
-                    ? 'Avancar'
-                    : 'Avancar para Fase 3'
+                    ? 'Avançar'
+                    : 'Avançar para Fase 3'
                   : finalizeLoading
                     ? 'Finalizando...'
-                    : 'Finalizar cotacao'}
+                    : 'Finalizar cotação'}
             </Button>
           </div>
         </div>

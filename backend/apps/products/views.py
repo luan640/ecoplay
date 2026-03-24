@@ -6,8 +6,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
-from .models import Category, Platform, Subplatform, Product, QuoteProduct, Showcase, StoreSettings
-from .serializers import ProductSerializer, QuoteProductSuggestionSerializer
+from .models import Category, Platform, Subplatform, Product, QuoteProduct, Showcase, StoreSettings, Review
+from .serializers import ProductSerializer, QuoteProductSuggestionSerializer, ReviewSerializer, ReviewCreateSerializer
 
 
 class PublicPlataformasView(APIView):
@@ -182,12 +182,99 @@ class QuoteProductSearchView(APIView):
             limit = 8
         limit = max(1, min(limit, 20))
 
+        queryset = Product.objects.all()
+        cfg = StoreSettings.get()
+        if not cfg.show_zero_stock_products:
+            queryset = queryset.filter(stock__gt=0)
+        if not cfg.show_zero_price_products:
+            queryset = queryset.filter(price__gt=0)
+
         queryset = (
-            QuoteProduct.objects.filter(Q(name__icontains=query) | Q(sku__icontains=query))
+            queryset.filter(is_active=True)
+            .filter(Q(name__icontains=query) | Q(sku__icontains=query))
             .order_by("name")[:limit]
         )
-        data = QuoteProductSuggestionSerializer(queryset, many=True).data
+
+        data = []
+        for product in queryset:
+            image_url = ""
+            if product.image:
+                image_url = request.build_absolute_uri(product.image.url)
+
+            data.append(
+                {
+                    "external_id": product.external_id or product.id,
+                    "name": product.name,
+                    "sku": product.sku,
+                    "image_url": image_url,
+                    "cover_image_url": image_url,
+                    "local_image_path": "",
+                }
+            )
         return Response({"results": data})
+
+
+class ProductReviewsView(APIView):
+    permission_classes = [AllowAny]
+
+    def _has_purchased(self, user, product):
+        from apps.core.models import SaleItem, SaleStatus
+        return SaleItem.objects.filter(
+            sale__status=SaleStatus.FINALIZADA,
+            product_id=product.id,
+        ).filter(
+            Q(sale__user=user) | Q(sale__customer_email__iexact=user.email)
+        ).exists()
+
+    def get(self, request, slug):
+        try:
+            product = Product.objects.get(slug=slug)
+        except Product.DoesNotExist:
+            return Response({"detail": "Produto não encontrado."}, status=404)
+
+        reviews = Review.objects.filter(product=product).select_related("user")
+        breakdown = {str(i): reviews.filter(rating=i).count() for i in range(1, 6)}
+
+        result = {
+            "reviews": ReviewSerializer(reviews, many=True).data,
+            "total": reviews.count(),
+            "average": float(product.rating),
+            "breakdown": breakdown,
+            "user_review": None,
+            "can_review": False,
+        }
+
+        if request.user.is_authenticated:
+            user_review = reviews.filter(user=request.user).first()
+            result["user_review"] = ReviewSerializer(user_review).data if user_review else None
+            result["can_review"] = (
+                user_review is None and self._has_purchased(request.user, product)
+            )
+
+        return Response(result)
+
+    def post(self, request, slug):
+        if not request.user.is_authenticated:
+            return Response({"detail": "Autenticação necessária."}, status=401)
+
+        try:
+            product = Product.objects.get(slug=slug)
+        except Product.DoesNotExist:
+            return Response({"detail": "Produto não encontrado."}, status=404)
+
+        if Review.objects.filter(product=product, user=request.user).exists():
+            return Response({"detail": "Você já avaliou este produto."}, status=400)
+
+        if not self._has_purchased(request.user, product):
+            return Response(
+                {"detail": "Apenas quem concluiu a compra pode avaliar este produto."},
+                status=403,
+            )
+
+        serializer = ReviewCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save(product=product, user=request.user, verified_purchase=True)
+        return Response(ReviewSerializer(review).data, status=201)
 
 
 class PublicVitrinasListView(APIView):

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { Suspense, useEffect, useMemo, useState } from 'react'
-import { Check, ChevronDown, ChevronUp, MapPin, Package, QrCode, Truck } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Copy, CreditCard, Loader2, Package, QrCode, Smartphone, Truck } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 
 import Footer from '@/components/footer'
@@ -79,6 +79,15 @@ function maskCardPreview(value: string) {
   return (masked + ' ���� ���� ���� ����').slice(0, 19)
 }
 
+function detectCardBrand(number: string): string {
+  const n = number.replace(/\s/g, '')
+  if (/^4/.test(n)) return 'visa'
+  if (/^5[1-5]/.test(n) || /^2[2-7]/.test(n)) return 'master'
+  if (/^3[47]/.test(n)) return 'amex'
+  if (/^6(?:011|5)/.test(n)) return 'elo'
+  return 'visa'
+}
+
 function CollapseSection({ title, icon, open, onToggle, children }: { title: string; icon: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <section className="border-b border-[#2e2e2e] last:border-b-0 py-4 first:pt-0 last:pb-0">
@@ -125,12 +134,24 @@ function CheckoutContent() {
   const [addressData, setAddressData] = useState({
     street: 'Rua Adilson Rosa de Oliveira', number: '', complement: '', reference: '', district: 'Jardim São Januário', city: 'São Paulo', state: 'São Paulo', country: 'BRA'
   })
-  const [cardData, setCardData] = useState({ number: '', expiry: '', holderName: '', cvv: '', installments: '10' })
+  const [cardData, setCardData] = useState({ number: '', expiry: '', holderName: '', cvv: '', installments: '1' })
+  const [paymentMethod, setPaymentMethod] = useState<'pix' | 'credit_card'>('pix')
+  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; ticket_url: string } | null>(null)
+  const [paymentApproved, setPaymentApproved] = useState(false)
+  const [copiedPix, setCopiedPix] = useState(false)
 
   useEffect(() => {
     const sync = () => setCartItems(readCart())
     sync()
     return subscribeCart(sync)
+  }, [])
+
+  useEffect(() => {
+    if (document.querySelector('script[src*="sdk.mercadopago.com"]')) return
+    const script = document.createElement('script')
+    script.src = 'https://sdk.mercadopago.com/js/v2'
+    script.async = true
+    document.head.appendChild(script)
   }, [])
 
   useEffect(() => {
@@ -383,42 +404,114 @@ function CheckoutContent() {
 
     setCheckoutSubmitError('')
     setCheckoutProtocol('')
+    setPixData(null)
+    setPaymentApproved(false)
     setCheckoutSubmitting(true)
-    try {
-      const saleRes = await apiFetch(`${BACKEND_URL}/api/checkout/create-sale/`, {
-        method: 'POST',
-        body: JSON.stringify({
-          coupon_code: couponCode,
-          discount_amount: couponDiscount.toFixed(2),
-          total_amount: total.toFixed(2),
-          customer: {
-            name: formData.fullName || '',
-            email: formData.email || '',
-            phone: formData.mobilePhone || formData.landlinePhone || '',
-            city: addressData.city || '',
-            state: addressData.state || '',
-          },
-          items: cartItems.map((item) => ({
-            product_id: item.productId,
-            name: item.name,
-            platform: item.platform,
-            quantity: item.quantity,
-            unit_price: item.price.toFixed(2),
-            total_price: (item.price * item.quantity).toFixed(2),
-          })),
-        }),
-      })
-      const saleData = await saleRes.json().catch(() => ({}))
-      if (!saleRes.ok) {
-        setCheckoutSubmitError(saleData?.detail || 'Nao foi possivel registrar a venda.')
-        return
-      }
 
-      writeCart([])
-      setCartItems([])
-      setCheckoutProtocol(String(saleData?.protocol || ''))
+    const commonPayload = {
+      payment_method: paymentMethod,
+      coupon_code: couponCode,
+      discount_amount: couponDiscount.toFixed(2),
+      total_amount: total.toFixed(2),
+      customer: {
+        name: formData.fullName || '',
+        email: formData.email || '',
+        phone: formData.mobilePhone || formData.landlinePhone || '',
+        cpf: formData.cpf || '',
+        city: addressData.city || '',
+        state: addressData.state || '',
+      },
+      items: cartItems.map((item) => ({
+        product_id: item.productId,
+        name: item.name,
+        platform: item.platform,
+        quantity: item.quantity,
+        unit_price: item.price.toFixed(2),
+        total_price: (item.price * item.quantity).toFixed(2),
+      })),
+    }
+
+    try {
+      if (paymentMethod === 'pix') {
+        const res = await apiFetch(`${BACKEND_URL}/api/checkout/mercadopago/create-payment/`, {
+          method: 'POST',
+          body: JSON.stringify(commonPayload),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setCheckoutSubmitError(data?.detail || 'Não foi possível criar o pagamento PIX.')
+          return
+        }
+        setCheckoutProtocol(String(data?.protocol || ''))
+        setPixData({
+          qr_code: data.qr_code || '',
+          qr_code_base64: data.qr_code_base64 || '',
+          ticket_url: data.ticket_url || '',
+        })
+        writeCart([])
+        setCartItems([])
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const w = window as any
+        const publicKey = process.env.NEXT_PUBLIC_MP_PUBLIC_KEY || ''
+        if (!publicKey || !w.MercadoPago) {
+          setCheckoutSubmitError('SDK do Mercado Pago não carregado. Recarregue a página e tente novamente.')
+          return
+        }
+        const mp = new w.MercadoPago(publicKey, { locale: 'pt-BR' })
+        const [expMonth, expYearShort] = cardData.expiry.split('/')
+        let tokenResult: { id?: string } = {}
+        try {
+          tokenResult = await mp.createCardToken({
+            cardNumber: cardData.number.replace(/\s/g, ''),
+            cardholderName: cardData.holderName,
+            cardExpirationMonth: expMonth?.trim(),
+            cardExpirationYear: expYearShort ? `20${expYearShort.trim()}` : '',
+            securityCode: cardData.cvv,
+            identificationType: 'CPF',
+            identificationNumber: formData.cpf.replace(/\D/g, ''),
+          })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Erro ao processar cartão.'
+          setCheckoutSubmitError(msg + ' Verifique os dados do cartão.')
+          return
+        }
+        if (!tokenResult?.id) {
+          setCheckoutSubmitError('Não foi possível tokenizar o cartão. Verifique os dados.')
+          return
+        }
+        const res = await apiFetch(`${BACKEND_URL}/api/checkout/mercadopago/create-payment/`, {
+          method: 'POST',
+          body: JSON.stringify({
+            ...commonPayload,
+            card_token: tokenResult.id,
+            payment_method_id: detectCardBrand(cardData.number),
+            installments: parseInt(cardData.installments || '1', 10),
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setCheckoutSubmitError(data?.detail || 'Não foi possível processar o pagamento.')
+          return
+        }
+        const mpStatus = data.mp_status || ''
+        if (mpStatus === 'approved') {
+          setPaymentApproved(true)
+          setCheckoutProtocol(String(data?.protocol || ''))
+          writeCart([])
+          setCartItems([])
+        } else if (mpStatus === 'in_process' || mpStatus === 'pending') {
+          setCheckoutProtocol(String(data?.protocol || ''))
+          setCheckoutSubmitError('Pagamento em análise. Você receberá a confirmação em breve.')
+          writeCart([])
+          setCartItems([])
+        } else {
+          const detail = data.status_detail || mpStatus || 'recusado'
+          setCheckoutSubmitError(`Pagamento ${detail}. Verifique os dados do cartão ou tente outro.`)
+        }
+      }
     } catch {
-      setCheckoutSubmitError('Nao foi possivel concluir o pedido.')
+      setCheckoutSubmitError('Não foi possível concluir o pedido. Tente novamente.')
     } finally {
       setCheckoutSubmitting(false)
     }
@@ -556,29 +649,187 @@ function CheckoutContent() {
                       </div>
                     </div>
 
-                    <div className="border-t border-[#2e2e2e] pt-4">
-                      {checkoutProtocol ? (
-                        <div className="mb-3 rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/10 px-3 py-3 text-sm text-[#bbf7d0]">
-                          Pedido registrado com sucesso. {`Protocolo: ${checkoutProtocol}`}
+                    <div className="border-t border-[#2e2e2e] pt-4 space-y-4">
+
+                      {/* PIX success */}
+                      {pixData ? (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/10 px-4 py-3 text-sm text-[#bbf7d0]">
+                            <Check className="w-4 h-4 flex-shrink-0" />
+                            <span>PIX gerado! Protocolo: <strong>{checkoutProtocol}</strong></span>
+                          </div>
+                          {pixData.qr_code_base64 && (
+                            <div className="flex justify-center p-4 bg-white rounded-2xl">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={`data:image/png;base64,${pixData.qr_code_base64}`} alt="QR Code PIX" className="w-44 h-44" />
+                            </div>
+                          )}
+                          {pixData.qr_code && (
+                            <div className="space-y-1.5">
+                              <p className="text-xs text-[#888]">Pix copia e cola:</p>
+                              <div className="flex gap-2">
+                                <Input
+                                  value={pixData.qr_code}
+                                  readOnly
+                                  className="text-[10px] bg-[#0f0f0f] border-[#2e2e2e] text-[#aaa] h-9"
+                                />
+                                <Button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(pixData.qr_code)
+                                    setCopiedPix(true)
+                                    setTimeout(() => setCopiedPix(false), 2000)
+                                  }}
+                                  className="flex-shrink-0 h-9 bg-[#49e4e6] text-[#0f0f0f] font-bold hover:bg-[#2fc8cc] flex items-center gap-1.5"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                  {copiedPix ? 'Copiado!' : 'Copiar'}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                          {pixData.ticket_url && (
+                            <a href={pixData.ticket_url} target="_blank" rel="noreferrer" className="block text-center text-xs text-[#49e4e6] hover:underline">
+                              Ver comprovante no Mercado Pago →
+                            </a>
+                          )}
                         </div>
-                      ) : null}
-                      <Button
-                        onClick={handleFinalizeCheckout}
-                        disabled={!canFinalizePurchase || checkoutSubmitting}
-                        className="w-full h-11 rounded-xl bg-[#49e4e6] text-[#0f0f0f] font-black hover:bg-[#2fc8cc] disabled:opacity-50"
-                      >
-                        {checkoutSubmitting ? 'Finalizando pedido...' : 'Finalizar pedido'}
-                      </Button>
-                      {checkoutSubmitError ? (
-                        <div className="mt-3 rounded-xl border border-[#f87171]/30 bg-[#f87171]/10 px-3 py-2 text-xs text-[#fecaca]">
-                          {checkoutSubmitError}
+                      ) : paymentApproved ? (
+                        /* Card approved */
+                        <div className="flex items-center gap-3 rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/10 px-4 py-4 text-sm text-[#bbf7d0]">
+                          <Check className="w-5 h-5 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold">Pagamento aprovado!</p>
+                            <p className="text-xs mt-0.5">Protocolo: {checkoutProtocol}</p>
+                          </div>
                         </div>
-                      ) : null}
-                      {!canFinalizePurchase && finalizeMissingMessages.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-[#f87171]/30 bg-[#f87171]/10 px-3 py-2 text-xs text-[#fecaca]">
-                          {finalizeMissingMessages.join(' | ')} 
-                        </div>
-                      ) : null}
+                      ) : (
+                        <>
+                          {/* Payment method selector */}
+                          <div>
+                            <p className="text-sm font-bold text-[#f5f5f5] mb-3">Forma de pagamento</p>
+                            <div className="grid grid-cols-2 gap-3">
+                              <button
+                                type="button"
+                                onClick={() => setPaymentMethod('pix')}
+                                className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all ${
+                                  paymentMethod === 'pix'
+                                    ? 'border-[#22c55e]/60 bg-[#166534]/15 text-[#22c55e]'
+                                    : 'border-[#2e2e2e] bg-[#1a1a1a] text-[#888] hover:border-[#49e4e6]/40'
+                                }`}
+                              >
+                                <Smartphone className="w-6 h-6" />
+                                <span className="text-sm font-bold">PIX</span>
+                                <span className="text-[10px] font-semibold bg-[#166534]/30 text-[#22c55e] px-2 py-0.5 rounded-full">
+                                  5% OFF
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPaymentMethod('credit_card')}
+                                className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all ${
+                                  paymentMethod === 'credit_card'
+                                    ? 'border-[#49e4e6]/60 bg-[#49e4e6]/10 text-[#49e4e6]'
+                                    : 'border-[#2e2e2e] bg-[#1a1a1a] text-[#888] hover:border-[#49e4e6]/40'
+                                }`}
+                              >
+                                <CreditCard className="w-6 h-6" />
+                                <span className="text-sm font-bold">Cartão</span>
+                                <span className="text-[10px] font-semibold bg-[#1a1a1a] text-[#888] px-2 py-0.5 rounded-full border border-[#2e2e2e]">
+                                  Até 10x
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Card form */}
+                          {paymentMethod === 'credit_card' && (
+                            <div className="space-y-3 rounded-xl border border-[#2e2e2e] bg-[#1a1a1a] p-4">
+                              <p className="text-xs font-bold text-[#888] uppercase tracking-wide">Dados do cartão</p>
+                              <div>
+                                <label className="text-xs text-[#bdbdbd]">Número do cartão</label>
+                                <Input
+                                  value={cardData.number}
+                                  onChange={(e) => setCardData((p) => ({ ...p, number: formatCardNumber(e.target.value) }))}
+                                  placeholder="0000 0000 0000 0000"
+                                  className="mt-1 h-10 rounded-xl border-[#2e2e2e] bg-[#141414] text-[#f5f5f5] font-mono"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-[#bdbdbd]">Nome no cartão</label>
+                                <Input
+                                  value={cardData.holderName}
+                                  onChange={(e) => setCardData((p) => ({ ...p, holderName: e.target.value.toUpperCase() }))}
+                                  placeholder="NOME COMO NO CARTÃO"
+                                  className="mt-1 h-10 rounded-xl border-[#2e2e2e] bg-[#141414] text-[#f5f5f5]"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-xs text-[#bdbdbd]">Validade</label>
+                                  <Input
+                                    value={cardData.expiry}
+                                    onChange={(e) => setCardData((p) => ({ ...p, expiry: formatCardExpiry(e.target.value) }))}
+                                    placeholder="MM/AA"
+                                    className="mt-1 h-10 rounded-xl border-[#2e2e2e] bg-[#141414] text-[#f5f5f5] font-mono"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-[#bdbdbd]">CVV</label>
+                                  <Input
+                                    value={cardData.cvv}
+                                    onChange={(e) => setCardData((p) => ({ ...p, cvv: formatCardCvv(e.target.value) }))}
+                                    placeholder="000"
+                                    type="password"
+                                    className="mt-1 h-10 rounded-xl border-[#2e2e2e] bg-[#141414] text-[#f5f5f5] font-mono"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <label className="text-xs text-[#bdbdbd]">Parcelas</label>
+                                <select
+                                  value={cardData.installments}
+                                  onChange={(e) => setCardData((p) => ({ ...p, installments: e.target.value }))}
+                                  className="mt-1 w-full h-10 rounded-xl border border-[#2e2e2e] bg-[#141414] text-[#f5f5f5] text-sm px-3 focus:outline-none focus:border-[#49e4e6]/50"
+                                >
+                                  {cardInstallments.map((row) => (
+                                    <option key={row.installments} value={String(row.installments)}>
+                                      {row.installments}x de {formatBRL(row.installmentAmount)}
+                                      {row.installments === 1 ? ' (sem juros)' : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Finalize button */}
+                          <Button
+                            onClick={handleFinalizeCheckout}
+                            disabled={!canFinalizePurchase || checkoutSubmitting}
+                            className="w-full h-12 rounded-xl bg-[#49e4e6] text-[#0f0f0f] font-black hover:bg-[#2fc8cc] disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            {checkoutSubmitting ? (
+                              <><Loader2 className="w-4 h-4 animate-spin" /> Processando...</>
+                            ) : paymentMethod === 'pix' ? (
+                              <><QrCode className="w-4 h-4" /> Gerar QR Code PIX</>
+                            ) : (
+                              <><CreditCard className="w-4 h-4" /> Pagar com cartão</>
+                            )}
+                          </Button>
+
+                          {checkoutSubmitError ? (
+                            <div className="rounded-xl border border-[#f87171]/30 bg-[#f87171]/10 px-3 py-2 text-xs text-[#fecaca]">
+                              {checkoutSubmitError}
+                            </div>
+                          ) : null}
+                          {!canFinalizePurchase && finalizeMissingMessages.length > 0 ? (
+                            <div className="rounded-xl border border-[#f87171]/30 bg-[#f87171]/10 px-3 py-2 text-xs text-[#fecaca]">
+                              {finalizeMissingMessages.join(' | ')}
+                            </div>
+                          ) : null}
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -29,6 +29,7 @@ export default function Header() {
   const [searchValue, setSearchValue] = useState('')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [customerName, setCustomerName] = useState<string | null>(null)
+  const [userType, setUserType] = useState<string | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const cartCount = useMemo(
     () => cartItems.reduce((acc, item) => acc + item.quantity, 0),
@@ -59,15 +60,25 @@ export default function Header() {
         })
         .then((data) => {
           if (!mounted) return
+          const authenticated = Boolean(data?.authenticated && data?.user)
+          if (!authenticated) {
+            setCustomerName(null)
+            setUserType(null)
+            return
+          }
           const fullName = data?.user?.full_name?.trim?.() || ''
           const email = data?.user?.email?.trim?.() || ''
           const firstName = fullName
             ? fullName.split(' ')[0]
             : (email ? email.split('@')[0] : null)
           setCustomerName(firstName || null)
+          setUserType(data?.user?.user_type || null)
         })
         .catch(() => {
-          if (mounted) setCustomerName(null)
+          if (mounted) {
+            setCustomerName(null)
+            setUserType(null)
+          }
         })
     }
 
@@ -104,6 +115,7 @@ export default function Header() {
       const me = await apiFetch(`${BACKEND_URL}/api/clientes/me/`)
       if (!me.ok) {
         setCustomerName(null)
+        setUserType(null)
       }
     } catch {
       return
@@ -188,13 +200,27 @@ export default function Header() {
             {userMenuOpen && (
               <div className="absolute right-0 top-full mt-2 w-44 rounded-xl border border-[#2e2e2e] bg-[#141414] p-2 shadow-xl">
                 {customerName ? (
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold text-[#f5f5f5] hover:bg-[#1a1a1a] hover:text-[#49e4e6] transition-colors"
-                  >
-                    <span>Sair</span>
-                  </button>
+                  <>
+                    {userType === 'ADMIN' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserMenuOpen(false)
+                          router.push('/painel')
+                        }}
+                        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold text-[#f5f5f5] hover:bg-[#1a1a1a] hover:text-[#49e4e6] transition-colors"
+                      >
+                        <span>Painel</span>
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold text-[#f5f5f5] hover:bg-[#1a1a1a] hover:text-[#49e4e6] transition-colors"
+                    >
+                      <span>Sair</span>
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -371,18 +397,49 @@ export default function Header() {
           </nav>
 
           <div className="mt-4 pt-4 border-t border-[#2e2e2e] flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setMobileMenuOpen(false)
-                router.push('/conta/login')
-              }}
-              className="flex-1 border-[#2e2e2e] text-[#aaaaaa] hover:text-[#f5f5f5] hover:border-[#49e4e6]"
-              size="sm"
-            >
-              <User className="w-4 h-4 mr-2" />
-              Entrar
-            </Button>
+            {customerName ? (
+              <>
+                {userType === 'ADMIN' ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setMobileMenuOpen(false)
+                      router.push('/painel')
+                    }}
+                    className="flex-1 border-[#2e2e2e] text-[#aaaaaa] hover:text-[#f5f5f5] hover:border-[#49e4e6]"
+                    size="sm"
+                  >
+                    <User className="w-4 h-4 mr-2" />
+                    Painel
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    setMobileMenuOpen(false)
+                    await handleLogout()
+                  }}
+                  className="flex-1 border-[#2e2e2e] text-[#aaaaaa] hover:text-[#f5f5f5] hover:border-[#49e4e6]"
+                  size="sm"
+                >
+                  <User className="w-4 h-4 mr-2" />
+                  Sair
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setMobileMenuOpen(false)
+                  router.push('/conta/login')
+                }}
+                className="flex-1 border-[#2e2e2e] text-[#aaaaaa] hover:text-[#f5f5f5] hover:border-[#49e4e6]"
+                size="sm"
+              >
+                <User className="w-4 h-4 mr-2" />
+                Entrar
+              </Button>
+            )}
             <Button
               className="flex-1 bg-[#49e4e6] hover:bg-[#2fc8cc] text-[#0f0f0f] font-bold"
               size="sm"
@@ -396,7 +453,6 @@ export default function Header() {
     </header>
   )
 }
-
 
 
 

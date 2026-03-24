@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py migrate)",
+      "Bash(python manage.py check)",
+      "Bash(python manage.py show_urls)",
+      "Bash(python -c \"from django.urls import reverse; print\\(''URL OK''\\)\")",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -r \"asaas\\\\|checkout\\\\|payment\" /c/Users/pcp2/pessoal/eco-play/frontend/app --include=*.ts* --include=*.js*)",
+      "Bash(pip install:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

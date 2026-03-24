@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Product, QuoteProduct, Coupon
+from .models import Product, QuoteProduct, Coupon, Review
 
 
 @admin.register(Product)
@@ -16,6 +16,14 @@ class QuoteProductAdmin(admin.ModelAdmin):
     list_display = ("external_id", "name", "sku", "image_exists")
     search_fields = ("name", "sku", "external_id")
     list_filter = ("image_exists",)
+
+
+@admin.register(Review)
+class ReviewAdmin(admin.ModelAdmin):
+    list_display = ("id", "product", "user", "rating", "verified_purchase", "created_at")
+    list_filter = ("rating", "verified_purchase")
+    search_fields = ("product__name", "user__email")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(Coupon)

@@ -1,4 +1,4 @@
-import { type Product, mapApiProduct } from './types'
+import { type Product, mapApiProduct, type ReviewsResponse } from './types'
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -132,6 +132,45 @@ export async function fetchAllShowcases(): Promise<ShowcaseSection[]> {
       : []
   } catch {
     return []
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reviews
+// ---------------------------------------------------------------------------
+
+export async function fetchProductReviews(slug: string): Promise<ReviewsResponse> {
+  const empty: ReviewsResponse = {
+    reviews: [],
+    total: 0,
+    average: 0,
+    breakdown: { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 },
+    user_review: null,
+    can_review: false,
+  }
+  try {
+    const res = await apiFetch(`${API_BASE}/api/produtos/${encodeURIComponent(slug)}/avaliacoes/`)
+    if (!res.ok) return empty
+    return await res.json()
+  } catch {
+    return empty
+  }
+}
+
+export async function submitProductReview(
+  slug: string,
+  data: { rating: number; comment: string }
+): Promise<{ ok: boolean; error?: string; data?: unknown }> {
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/api/produtos/${encodeURIComponent(slug)}/avaliacoes/`,
+      { method: 'POST', body: JSON.stringify(data) }
+    )
+    const json = await res.json()
+    if (!res.ok) return { ok: false, error: json.detail ?? 'Erro ao enviar avaliação.' }
+    return { ok: true, data: json }
+  } catch {
+    return { ok: false, error: 'Erro de conexão.' }
   }
 }
 

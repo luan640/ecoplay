@@ -662,7 +662,7 @@ export default function SearchResults() {
               ))}
               {selectedCategory && (
                 <button onClick={() => setSelectedCategory('')} className="flex items-center gap-1.5 bg-[#49e4e6]/10 border border-[#49e4e6]/30 text-[#49e4e6] text-xs font-bold px-3 py-1.5 rounded-full hover:bg-[#49e4e6]/20 transition-all">
-                  {CATEGORIES.find((c) => c.value === selectedCategory)?.label} <X className="w-3 h-3" />
+                  {selectedCategory} <X className="w-3 h-3" />
                 </button>
               )}
               {selectedPriceRange !== null && (
@@ -775,4 +775,3 @@ export default function SearchResults() {
     </div>
   )
 }
-

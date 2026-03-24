@@ -7,6 +7,7 @@ import Footer from '@/components/footer'
 import ProductImageGallery from '@/components/product-image-gallery'
 import ProductBuyBox from '@/components/product-buy-box'
 import ProductCarousel from '@/components/product-carousel'
+import ProductReviews from '@/components/product-reviews'
 import { fetchProductBySlug, fetchProducts, fetchShowcase } from '@/lib/api'
 
 interface PageProps {
@@ -203,6 +204,13 @@ export default async function ProductPage({ params }: PageProps) {
         <div className="max-w-screen-xl mx-auto px-4">
           <div className="border-t border-[#2e2e2e]" />
         </div>
+
+        {/* Reviews */}
+        <div className="max-w-screen-xl mx-auto px-4">
+          <div className="border-t border-[#2e2e2e]" />
+        </div>
+
+        <ProductReviews productSlug={product.slug} />
 
         {/* Related Products */}
         {related.length > 0 && (

@@ -27,6 +27,24 @@ export interface Product {
   sku: string
 }
 
+export interface Review {
+  id: number
+  user_name: string
+  rating: number
+  comment: string
+  verified_purchase: boolean
+  created_at: string
+}
+
+export interface ReviewsResponse {
+  reviews: Review[]
+  total: number
+  average: number
+  breakdown: Record<string, number>
+  user_review: Review | null
+  can_review: boolean
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function mapApiProduct(raw: any): Product {
   const price = parseFloat(raw.price ?? '0') || 0
